@@ -8,6 +8,7 @@ import com.example.attractionreservation.domain.routeRecommendation.entity.enums
 import com.example.attractionreservation.domain.routeRecommendation.entity.enums.RouteResultType;
 import com.example.attractionreservation.domain.routeRecommendation.entity.enums.StartLocation;
 import com.example.attractionreservation.domain.routeRecommendation.entity.enums.TravelTimeBasis;
+import com.example.attractionreservation.domain.routeRecommendation.facade.RouteRecommendationFacade;
 import com.example.attractionreservation.domain.routeRecommendation.service.RouteRecommendationService;
 import com.example.attractionreservation.domain.user.repository.UserRepository;
 import com.example.attractionreservation.global.config.SecurityConfig;
@@ -69,6 +70,9 @@ public class RouteRecommendationControllerTest {
 
     @MockitoBean
     private RouteRecommendationService routeRecommendationService;
+
+    @MockitoBean
+    private RouteRecommendationFacade routeRecommendationFacade;
 
     @MockitoBean
     private JwtProvider jwtProvider;
@@ -217,7 +221,7 @@ public class RouteRecommendationControllerTest {
     @DisplayName("추천 경로가 저장되면 HTTP 201과 선택·추천 개수 메시지를 반환한다")
     void createRouteRecommendation_saved_returnsCreated() throws Exception {
         // given: detailResponse() = 선택 2개, 추천 1개
-        when(routeRecommendationService.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
+        when(routeRecommendationFacade.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
                 .thenReturn(detailResponse());
 
         // when & then
@@ -234,11 +238,36 @@ public class RouteRecommendationControllerTest {
         // JSON 이 요청 DTO 로 올바르게 바뀌었는지
         ArgumentCaptor<CreateRouteRecommendationRequest> captor =
                 ArgumentCaptor.forClass(CreateRouteRecommendationRequest.class);
-        verify(routeRecommendationService).createRouteRecommendation(eq(1L), captor.capture());
+        verify(routeRecommendationFacade).createRouteRecommendation(eq(1L), captor.capture());
         CreateRouteRecommendationRequest request = captor.getValue();
         assertThat(request.ticketId()).isEqualTo(5001L);
         assertThat(request.startAt()).isEqualTo(at("13:00"));
         assertThat(request.attractionIds()).containsExactly(101L, 102L);
+    }
+
+    @Test
+    @DisplayName("취향 문장을 보내면 요청 DTO에 담아 Facade로 넘긴다")
+    void createRouteRecommendation_withPreferenceText_passedToFacade() throws Exception {
+        // given
+        when(routeRecommendationFacade.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
+                .thenReturn(detailResponse());
+        String body = """
+                {"ticketId": 5001, "startAt": "2026-10-20T13:00:00", "endAt": "2026-10-20T18:00:00",
+                 "attractionIds": [101, 102], "preferenceText": "스릴 있는 건 좋아요"}
+                """;
+
+        // when
+        mockMvc.perform(post("/api/route-recommendations")
+                        .with(authenticatedMember())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        // then
+        ArgumentCaptor<CreateRouteRecommendationRequest> captor =
+                ArgumentCaptor.forClass(CreateRouteRecommendationRequest.class);
+        verify(routeRecommendationFacade).createRouteRecommendation(eq(1L), captor.capture());
+        assertThat(captor.getValue().preferenceText()).isEqualTo("스릴 있는 건 좋아요");
     }
 
     @Test
@@ -249,7 +278,7 @@ public class RouteRecommendationControllerTest {
                 5001L, at("13:00"), at("18:00"), 1,
                 List.of(SearchRouteRecommendationResponse.ExcludedAttraction.of(
                         101L, "T익스프레스", ExclusionReason.RESERVATION_CLOSED)));
-        when(routeRecommendationService.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
+        when(routeRecommendationFacade.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
                 .thenReturn(none);
 
         // when & then
@@ -281,7 +310,11 @@ public class RouteRecommendationControllerTest {
                 // 목록 안에 null
                 """
                 {"ticketId": 5001, "startAt": "2026-10-20T13:00:00", "endAt": "2026-10-20T18:00:00", "attractionIds": [101, null]}
+                """,
+                // 취향 문장 200자 초과
                 """
+                {"ticketId": 5001, "startAt": "2026-10-20T13:00:00", "endAt": "2026-10-20T18:00:00", "attractionIds": [101], "preferenceText": "%s"}
+                """.formatted("가".repeat(201))
         );
     }
 
@@ -296,7 +329,7 @@ public class RouteRecommendationControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(ErrorCode.INVALID_INPUT_VALUE.getMessage()));
 
-        verifyNoInteractions(routeRecommendationService);
+        verifyNoInteractions(routeRecommendationService, routeRecommendationFacade);
     }
 
     @Test
@@ -313,7 +346,7 @@ public class RouteRecommendationControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(ErrorCode.INVALID_REQUEST_BODY.getMessage()));
 
-        verifyNoInteractions(routeRecommendationService);
+        verifyNoInteractions(routeRecommendationService, routeRecommendationFacade);
     }
 
     @ParameterizedTest
@@ -324,7 +357,7 @@ public class RouteRecommendationControllerTest {
     @DisplayName("서비스 검증 실패를 ErrorCode 의 HTTP 상태로 반환한다")
     void createRouteRecommendation_rejected_returnsExpectedError(ErrorCode errorCode) throws Exception {
         // given
-        when(routeRecommendationService.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
+        when(routeRecommendationFacade.createRouteRecommendation(eq(1L), any(CreateRouteRecommendationRequest.class)))
                 .thenThrow(new BusinessException(errorCode));
 
         // when & then
@@ -345,7 +378,7 @@ public class RouteRecommendationControllerTest {
                         .content(VALID_CREATE_BODY))
                 .andExpect(status().isUnauthorized());
 
-        verifyNoInteractions(routeRecommendationService);
+        verifyNoInteractions(routeRecommendationService, routeRecommendationFacade);
     }
 
     // ---------- 목록 조회 ----------

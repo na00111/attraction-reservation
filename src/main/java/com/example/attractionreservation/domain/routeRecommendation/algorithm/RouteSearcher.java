@@ -4,16 +4,31 @@ package com.example.attractionreservation.domain.routeRecommendation.algorithm;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
+import com.example.attractionreservation.domain.routeRecommendation.preference.PreferenceScores;
 import com.example.attractionreservation.global.util.KstTime;
 import org.springframework.stereotype.Component;
 //후보 어트랙션으로 방문 순서와 탑승 슬롯을 결정
 @Component
 public class RouteSearcher {
 
+    // 취향 문장이 없는 경우. 모든 경로의 취향 점수가 같아 기존 비교 규칙만으로 고른다.
     public RouteSearchResult search(
             LocalDateTime startAt,
             LocalDateTime endAt,
             List<CandidateAttraction> candidates
+    ) {
+        return search(startAt, endAt, candidates, PreferenceScores.neutral());
+    }
+
+    /**
+     * @param preferenceScores 어트랙션별 취향 단계. 방문 개수가 같은 경로들 중 무엇을 고를지에만 쓰인다(isBetter 2순위).
+     *                         슬롯 선택·도착 시각 계산·이용 종료 제한에는 관여하지 않는다.
+     */
+    public RouteSearchResult search(
+            LocalDateTime startAt,
+            LocalDateTime endAt,
+            List<CandidateAttraction> candidates,
+            PreferenceScores preferenceScores
     ) {
         // 아무것도 방문하지 않는 경로를 초기 비교 대상으로 둔다
         RouteSearchResult emptyResult = new RouteSearchResult(
@@ -26,7 +41,8 @@ public class RouteSearcher {
                 startAt, //첫 이동을 시작할 수 있는 시각
                 new ArrayList<>(), //현재 만들어 가는 방문 경로
                 new HashSet<>(), //현재 경로에서 이미 방문한 어트랙션 ID
-                emptyResult
+                emptyResult,
+                preferenceScores
         );
         //최종 선택된 경로에 포함된 어트랙션 ID를 모음
         Set<Long> includedIds = new HashSet<>();
@@ -55,13 +71,14 @@ public class RouteSearcher {
             LocalDateTime departureAt,
             List<PlannedVisit> path,
             Set<Long> visitedIds,
-            RouteSearchResult bestResult
+            RouteSearchResult bestResult,
+            PreferenceScores preferenceScores
     ) {
         //현재 경로도 하나의 완성 가능한 추천 결과로 평가
         RouteSearchResult currentResult = new RouteSearchResult(
                 startAt, List.copyOf(path), List.of()
         );
-        if (isBetter(currentResult, bestResult)) {
+        if (isBetter(currentResult, bestResult, preferenceScores)) {
             bestResult = currentResult;
         }
         // 다음 방문지로 선택할 수 있는 모든 어트랙션을 시도
@@ -108,7 +125,8 @@ public class RouteSearcher {
                     candidates,slot.endsAt(),
                     path,
                     visitedIds,
-                    bestResult
+                    bestResult,
+                    preferenceScores
             );
             //백트래킨 -> 이번 방문 선택을 되돌려 다음 후보를 같은 출발 상태에서 시도
             visitedIds.remove(attraction.attractionId());
@@ -142,7 +160,8 @@ public class RouteSearcher {
     //새 경로가 기존 최선 경로보다 우선하는지 판단
     private boolean isBetter(
             RouteSearchResult candidate,
-            RouteSearchResult best
+            RouteSearchResult best,
+            PreferenceScores preferenceScores
     ) {
         // 1순위: 방문 개수가 많은 경로
         int candidateCount = candidate.visits().size();
@@ -152,12 +171,24 @@ public class RouteSearcher {
             // 새 경로의 방문 개수가 더 많은지 반환
             return candidateCount > bestCount;
         }
-        // 방문 개수가 같으면 아래에서 총 소요 시간을 비교하기
+        // 방문 개수가 같으면 아래에서 취향 점수, 총 소요 시간 순으로 비교하기
 
         if (candidate.isEmpty()) {
             return false;
         }
-        //2순위: 전체 소요 시간이 짧은 경로
+        //2순위(추가): 취향 점수가 높은 경로 = 좋아하는 어트랙션이 많고 싫어하는 어트랙션이 적은 경로
+        // 방문 개수가 같을 때만 비교하므로 "더 많이 탄다"는 1순위를 취향이 뒤집지 않는다.
+        // 같은 어트랙션 집합이면 점수가 같아 아래 시간 비교로 넘어간다. 즉 전부 탈 수 있으면 결과가 기존과 같고,
+        // 일부만 탈 수 있을 때 "어떤 어트랙션을 남길지"에만 영향을 준다.
+        // 취향 문장이 없거나 Jev가 답하지 않으면 모든 점수가 0이라 기존 비교와 같다.
+        int preferenceComparison = Integer.compare(
+                preferenceScores.totalOf(candidate.visits()),
+                preferenceScores.totalOf(best.visits())
+        );
+        if (preferenceComparison != 0) {
+            return preferenceComparison > 0;
+        }
+        //3순위: 전체 소요 시간이 짧은 경로
         // compare(a, b):
         // - 음수: a가 작다
         // - 0: 같다
@@ -169,13 +200,13 @@ public class RouteSearcher {
         if (durationComparison != 0) {
             return durationComparison < 0;
         }
-        //3순위: 첫 번째 슬롯의 탑승 시작 시각이 빠른 경로
+        //4순위: 첫 번째 슬롯의 탑승 시작 시각이 빠른 경로
         int firstStartComparison = candidate.visits().get(0).startsAt()
                 .compareTo(best.visits().get(0).startsAt());
         if (firstStartComparison != 0) {
             return firstStartComparison <0;
         }
-        //4순위: 방문 순서대로 어트랙션 ID를 사전순 비교
+        //5순위: 방문 순서대로 어트랙션 ID를 사전순 비교
         for (int visitIndex = 0; visitIndex <candidateCount; visitIndex++) {
             int idComparison = Long.compare(
                     candidate.visits().get(visitIndex).attractionId(),
