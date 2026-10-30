@@ -22,6 +22,8 @@ import com.example.attractionreservation.domain.routeRecommendation.entity.Route
 import com.example.attractionreservation.domain.routeRecommendation.entity.RouteRecommendationExclusion;
 import com.example.attractionreservation.domain.routeRecommendation.entity.RouteRecommendationStop;
 import com.example.attractionreservation.domain.routeRecommendation.entity.enums.ExclusionReason;
+import com.example.attractionreservation.domain.routeRecommendation.preference.AttractionProfile;
+import com.example.attractionreservation.domain.routeRecommendation.preference.PreferenceScores;
 import com.example.attractionreservation.domain.routeRecommendation.repository.RouteRecommendationRepository;
 import com.example.attractionreservation.domain.ticket.entity.Ticket;
 import com.example.attractionreservation.domain.ticket.entity.enums.TicketStatus;
@@ -70,6 +72,16 @@ public class RouteRecommendationService {
 
     @Transactional
     public SearchRouteRecommendationResponse createRouteRecommendation(Long userId, CreateRouteRecommendationRequest request) {
+        return createRouteRecommendation(userId, request, PreferenceScores.neutral());
+    }
+
+    /**
+     * 취향 단계를 반영해 추천 경로를 만든다. 취향 단계는 트랜잭션 밖에서 미리 계산해 받는다(RouteRecommendationFacade).
+     * 이 트랜잭션 안에서는 외부 API(Jev)를 부르지 않는다.
+     */
+    @Transactional
+    public SearchRouteRecommendationResponse createRouteRecommendation(
+            Long userId, CreateRouteRecommendationRequest request, PreferenceScores preferenceScores) {
         LocalDateTime now = LocalDateTime.now(clock);
         List<Long> attractionIds = request.attractionIds();
 
@@ -84,7 +96,7 @@ public class RouteRecommendationService {
         Map<Long, List<SlotView>> slotsByAttractionId = findSlotsByAttraction(attractionIds, ticket.getValidDate());
 
         CandidateSelection selection = candidateSelector.select(attractions, slotsByAttractionId, startAt, endAt, now);
-        RouteSearchResult route = routeSearcher.search(startAt, endAt, selection.candidates());
+        RouteSearchResult route = routeSearcher.search(startAt, endAt, selection.candidates(), preferenceScores);
         List<Exclusion> exclusions = collectExclusionsInRequestOrder(attractions, selection, route);
 
         if (route.isEmpty()) {
@@ -95,6 +107,19 @@ public class RouteRecommendationService {
         RouteRecommendation recommendation = RouteRecommendation.create(
                 userId, ticket.getId(), startAt, endAt, toStops(route), toExclusionEntities(exclusions));
         return SearchRouteRecommendationResponse.from(routeRecommendationRepository.save(recommendation));
+    }
+
+    /**
+     * 취향 판단(Jev)에 넘길 어트랙션 이름·설명. 없는 ID는 건너뛴다.
+     * 없는 어트랙션의 오류(ATTRACTION_NOT_FOUND)는 이어서 호출되는 createRouteRecommendation이 기존 검증으로 낸다.
+     */
+    @Transactional(readOnly = true)
+    public List<AttractionProfile> findAttractionProfiles(List<Long> attractionIds) {
+        return attractionRepository.findAllById(attractionIds).stream()
+                .filter(attraction -> attraction.getDeletedAt() == null)
+                .map(attraction -> new AttractionProfile(
+                        attraction.getId(), attraction.getName(), attraction.getDescription()))
+                .toList();
     }
 
     @Transactional(readOnly = true)

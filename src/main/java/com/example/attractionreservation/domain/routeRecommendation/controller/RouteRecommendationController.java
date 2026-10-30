@@ -2,6 +2,7 @@ package com.example.attractionreservation.domain.routeRecommendation.controller;
 
 import com.example.attractionreservation.domain.routeRecommendation.dto.CreateRouteRecommendationRequest;
 import com.example.attractionreservation.domain.routeRecommendation.dto.SearchRouteRecommendationResponse;
+import com.example.attractionreservation.domain.routeRecommendation.facade.RouteRecommendationFacade;
 import com.example.attractionreservation.domain.routeRecommendation.service.RouteRecommendationService;
 import com.example.attractionreservation.global.response.ApiResponse;
 import jakarta.validation.Valid;
@@ -21,13 +22,14 @@ import jakarta.validation.constraints.Min;
 public class RouteRecommendationController {
 
     private final RouteRecommendationService routeRecommendationService;
+    private final RouteRecommendationFacade routeRecommendationFacade; // 생성은 취향 판단(외부 호출) 때문에 Facade를 거친다
 
     @PostMapping
     public ResponseEntity<ApiResponse<SearchRouteRecommendationResponse>> createRouteRecommendation(
             @AuthenticationPrincipal Long userId,
             @Valid @RequestBody CreateRouteRecommendationRequest request
     ) {
-        SearchRouteRecommendationResponse response = routeRecommendationService.createRouteRecommendation(userId, request);
+        SearchRouteRecommendationResponse response = routeRecommendationFacade.createRouteRecommendation(userId, request);
 
         // 추천 없음은 오류가 아니라 정상 결과 → 200, 저장된 추천은 새 리소스 → 201
         if (response.isNone()) {
