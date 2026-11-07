@@ -20,6 +20,9 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -40,7 +43,23 @@ public class TicketService {
                 stablePageable
         );
 
-        return tickets.map(SearchTicketResponse::from);
+        Map<Long, TicketOrderPayment> orderPayments = findOrderPayments(tickets.getContent());
+
+        return tickets.map(ticket -> SearchTicketResponse.from(ticket, orderPayments.get(ticket.getId())));
+    }
+
+    // 현재 페이지 티켓들의 주문번호·결제번호를 쿼리 한 번으로 조회해 티켓 ID로 찾을 수 있게 만든다.
+    private Map<Long, TicketOrderPayment> findOrderPayments(List<Ticket> tickets) {
+        if (tickets.isEmpty()) {
+            return Map.of();
+        }
+
+        List<Long> ticketIds = tickets.stream()
+                .map(Ticket::getId)
+                .toList();
+
+        return ticketRepository.findOrderPaymentsByTicketIdIn(ticketIds).stream()
+                .collect(Collectors.toMap(TicketOrderPayment::ticketId, Function.identity()));
     }
 
     // 내 티켓 상세 조회
@@ -102,6 +121,11 @@ public class TicketService {
         }
 
         return tickets;
+    }
+
+    // 관리자 주문 상세 - 주문에 발급된 티켓을 조회한다. (부분 환불할 티켓을 고르는 데 쓴다)
+    public List<Ticket> findTicketsByOrderId(Long orderId) {
+        return ticketRepository.findAllByOrderId(orderId);
     }
 
     // 환불 - 주문 상품들의 미사용 티켓을 잠가서 조회한다.

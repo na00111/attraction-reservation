@@ -3,29 +3,36 @@ package com.example.attractionreservation.domain.order.dto;
 import com.example.attractionreservation.domain.order.entity.Order;
 import com.example.attractionreservation.domain.order.entity.OrderItem;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.time.ZoneId;
+import java.util.List;
 
 public record SearchOrderResponse(
         Long orderId,
         Integer totalAmount,
         String status,
+        LocalDate visitDate,
         LocalDateTime createdAt,
-        List<Item> items
+        List<Item> items,
+        String pgId
 ) {
 
-    public static SearchOrderResponse from(Order order) {
+    public static SearchOrderResponse from(Order order, String pgId) {
         return new SearchOrderResponse(
                 order.getId(),
                 order.getTotalAmount(),
                 order.getStatus().name(),
-
-                // DB의 생성 시각을 서비스 기준 시간대인 KST로 변환한다.
-                LocalDateTime.ofInstant(order.getCreatedAt(), ZoneId.of("Asia/Seoul")),
+                // 결제 화면이 새로고침돼도 방문일을 다시 보여 줄 수 있도록 함께 반환한다.
+                order.getVisitDate(),
+                LocalDateTime.ofInstant(
+                        order.getCreatedAt(),
+                        ZoneId.of("Asia/Seoul")
+                ),
                 order.getOrderItems().stream()
                         .map(Item::from)
-                        .toList()
+                        .toList(),
+                pgId
         );
     }
 
@@ -40,7 +47,7 @@ public record SearchOrderResponse(
             return new Item(
                     orderItem.getId(),
                     orderItem.getTicketProduct().getId(),
-                    // 상품의 현재 가격이 아닌 주문 당시 단가를 반환한다.
+                    // 현재 상품 가격이 아닌 주문 당시 단가를 반환한다.
                     orderItem.getPrice(),
                     orderItem.getQuantity()
             );

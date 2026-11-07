@@ -86,7 +86,9 @@ public class SecurityConfig {
                         // 헬스 체크와 Prometheus 메트릭 수집은 인증 없이 접근할 수 있다.
                         // actuator는 관리 포트(management.server.port)에서만 응답하고, 그 포트의 접근은 보안 그룹으로 제한한다.
                         // 관리 포트에도 이 필터 체인이 적용되므로 permitAll이 없으면 수집이 401로 실패한다.
-                        .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/prometheus").permitAll()
+                        // /actuator/health/**는 /actuator/health와 liveness·readiness 하위 경로를 함께 포함한다.
+                        // /readyz는 로드밸런서가 서비스 포트에서 보는 readiness다. (application-prod.yml)
+                        .requestMatchers(HttpMethod.GET, "/actuator/health/**", "/actuator/prometheus", "/readyz").permitAll()
 
                         // 관리자 전용 API는 ADMIN 권한이 있는 회원만 접근할 수 있다.
                         .requestMatchers("/api/admin/**").hasRole(ADMIN_ROLE)
